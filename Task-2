@@ -1,0 +1,157 @@
+//*INDUSTRIAL IOT (IIOT) PREDICTIVE MAINTENANCE SYSTEM*//
+//Sensor Simulation (Data Generation)//
+import numpy as np
+import pandas as pd
+import time
+import random
+
+def generate_sensor_data(num_samples=1000):
+    data = {
+        'timestamp': pd.date_range(start='2023-01-01', periods=num_samples, freq='T'),
+        'temperature': np.random.normal(loc=75, scale=5, size=num_samples),
+        'vibration': np.random.normal(loc=0.5, scale=0.1, size=num_samples),
+        'pressure': np.random.normal(loc=100, scale=10, size=num_samples)
+    }
+    return pd.DataFrame(data)
+
+sensor_data = generate_sensor_data()
+sensor_data.to_csv('sensor_data.csv', index=False)
+//Data Storage (Flask Server)//
+from flask import Flask, request, jsonify
+import sqlite3
+
+app = Flask(__name__)
+
+def init_db():
+    conn = sqlite3.connect('sensor_data.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS sensor_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            temperature REAL,
+            vibration REAL,
+            pressure REAL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+@app.route('/data', methods=['POST'])
+def receive_data():
+    data = request.get_json()
+    conn = sqlite3.connect('sensor_data.db')
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO sensor_data (timestamp, temperature, vibration, pressure)
+        VALUES (?, ?, ?, ?)
+    ''', (data['timestamp'], data['temperature'], data['vibration'], data['pressure']))
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success'})
+
+if __name__ == '__main__':
+    init_db()
+    app.run(debug=True)
+//Machine Learning Model (Anomaly Detection)//
+from sklearn.ensemble import IsolationForest
+import joblib
+
+def train_model(data):
+    model = IsolationForest(contamination=0.01)
+    model.fit(data[['temperature', 'vibration', 'pressure']])
+    return model
+
+sensor_data = pd.read_csv('sensor_data.csv')
+model = train_model(sensor_data)
+joblib.dump(model, 'anomaly_detection_model.pkl')
+//Real-time Anomaly Detection//
+from flask import Flask, request, jsonify
+import sqlite3
+import joblib
+import numpy as np
+
+app = Flask(__name__)
+model = joblib.load('anomaly_detection_model.pkl')
+
+def init_db():
+    conn = sqlite3.connect('sensor_data.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS sensor_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            temperature REAL,
+            vibration REAL,
+            pressure REAL,
+            anomaly INTEGER
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+@app.route('/data', methods=['POST'])
+def receive_data():
+    data = request.get_json()
+    features = np.array([[data['temperature'], data['vibration'], data['pressure']]])
+    anomaly = int(model.predict(features)[0] == -1)
+    
+    conn = sqlite3.connect('sensor_data.db')
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO sensor_data (timestamp, temperature, vibration, pressure, anomaly)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (data['timestamp'], data['temperature'], data['vibration'], data['pressure'], anomaly))
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success', 'anomaly': anomaly})
+
+if __name__ == '__main__':
+    init_db()
+    app.run(debug=True)
+//Visualization Dashboard//
+from flask import Flask, render_template
+import sqlite3
+import pandas as pd
+
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    conn = sqlite3.connect('sensor_data.db')
+    df = pd.read_sql_query('SELECT * FROM sensor_data', conn)
+    conn.close()
+    return render_template('index.html', data=df.to_dict(orient='records'))
+
+if __name__ == '__main__':
+    app.run(debug=True)
+//TEMPLATE FOR DASHBOARD//
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IIoT Predictive Maintenance Dashboard</title>
+</head>
+<body>
+    <h1>Sensor Data</h1>
+    <table border="1">
+        <tr>
+            <th>ID</th>
+            <th>Timestamp</th>
+            <th>Temperature</th>
+            <th>Vibration</th>
+            <th>Pressure</th>
+            <th>Anomaly</th>
+        </tr>
+        {% for row in data %}
+        <tr>
+            <td>{{ row.id }}</td>
+            <td>{{ row.timestamp }}</td>
+            <td>{{ row.temperature }}</td>
+            <td>{{ row.vibration }}</td>
+            <td>{{ row.pressure }}</td>
+            <td>{{ row.anomaly }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>
